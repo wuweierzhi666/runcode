@@ -2049,7 +2049,8 @@ def cron_autorun_loop(history: list, context: dict):
             print_turn_assistants(history, turn_start)
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the runcode CLI."""
     CLI_ACTIVE = True
     print("欢迎使用runcode")
     print("输入问题后按回车键发送，输入q即可退出程序。\n")
@@ -2085,3 +2086,7 @@ if __name__ == "__main__":
             history.append({"role": "user",
                             "content": f"[Inbox]\n{inbox_text}"})
         print()
+
+
+if __name__ == "__main__":
+    main()
