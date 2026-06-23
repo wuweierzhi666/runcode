@@ -11,7 +11,7 @@ memory, prompt assembly, error recovery, task graph, background tasks, cron,
 teams, protocols, autonomous agents, worktrees, and MCP.
 """
 
-import ast, json, os, subprocess, time, random, threading, re
+import ast, json, os, subprocess, time, random, threading, re, sys
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
@@ -51,11 +51,56 @@ CONTEXT_LIMIT = 50000
 KEEP_RECENT_TOOL_RESULTS = 3
 PERSIST_THRESHOLD = 30000
 CONTINUATION_PROMPT = "Continue from the previous response. Do not repeat completed work."
-PROMPT = "\033[36ms20 >> \033[0m"
+PROMPT = "\033[36mruncode >> \033[0m"
 CLI_ACTIVE = False
+
+# ── UI Styling ──
+
+SECTION_WIDTH = 60
+TURN_COUNTER = 0
+_SESSION_START = time.time()
+
+
+def ui_separator(title: str = "", char: str = "-") -> str:
+    """Return a section divider line with optional centered title."""
+    if title:
+        side = char * ((SECTION_WIDTH - len(title) - 2) // 2)
+        return f"\033[90m{side} {title} {side}\033[0m"
+    return f"\033[90m{char * SECTION_WIDTH}\033[0m"
+
+
+def ui_duration(seconds: float) -> str:
+    """Format a duration into a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    mins = int(seconds // 60)
+    secs = seconds % 60
+    if mins < 60:
+        return f"{mins}m {secs:.0f}s"
+    hours = mins // 60
+    mins = mins % 60
+    return f"{hours}h {mins}m {secs:.0f}s"
+
+
+def ui_session_stats() -> str:
+    """Return session statistics string."""
+    elapsed = time.time() - _SESSION_START
+    return f"回合: {TURN_COUNTER}  耗时: {ui_duration(elapsed)}"
+
+
+def ui_prompt() -> str:
+    """Return the colored prompt string with turn number."""
+    return f"\033[36m[#{TURN_COUNTER}] runcode >> \033[0m"
 
 
 def terminal_print(text: str):
+    text = text.rstrip("\n")
+    # Encode-safe for Windows consoles with limited code pages
+    try:
+        enc = sys.stdout.encoding or "utf-8"
+        text = text.encode(enc, errors="replace").decode(enc, errors="replace")
+    except Exception:
+        pass
     if threading.current_thread() is threading.main_thread() or not CLI_ACTIVE:
         print(text)
         return
@@ -401,7 +446,7 @@ def run_bash(command: str, cwd: Path = None,
 def run_read(path: str, limit: int | None = None,
              offset: int = 0, cwd: Path = None) -> str:
     try:
-        lines = safe_path(path, cwd).read_text().splitlines()
+        lines = safe_path(path, cwd).read_text(encoding="utf-8").splitlines()
         offset = max(int(offset or 0), 0)
         limit = int(limit) if limit is not None else None
         lines = lines[offset:]
@@ -416,7 +461,7 @@ def run_write(path: str, content: str, cwd: Path = None) -> str:
     try:
         fp = safe_path(path, cwd)
         fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content)
+        fp.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} bytes to {path}"
     except Exception as e:
         return f"Error: {e}"
@@ -426,10 +471,10 @@ def run_edit(path: str, old_text: str, new_text: str,
              cwd: Path = None) -> str:
     try:
         fp = safe_path(path, cwd)
-        text = fp.read_text()
+        text = fp.read_text(encoding="utf-8")
         if old_text not in text:
             return f"Error: text not found in {path}"
-        fp.write_text(text.replace(old_text, new_text, 1))
+        fp.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
         return f"Edited {path}"
     except Exception as e:
         return f"Error: {e}"
@@ -2023,12 +2068,14 @@ def agent_loop(messages: list, context: dict):
 
 
 def print_turn_assistants(messages: list, turn_start: int):
+    """Print assistant text blocks with a subtle visual prefix."""
     for msg in messages[turn_start:]:
         if msg.get("role") != "assistant":
             continue
         for block in msg.get("content", []):
-            if getattr(block, "type", None) == "text":
-                terminal_print(block.text)
+            if getattr(block, "type", None) == "text" and block.text.strip():
+                text = block.text.rstrip("\n")
+                terminal_print(text)
 
 
 def cron_autorun_loop(history: list, context: dict):
@@ -2049,30 +2096,91 @@ def cron_autorun_loop(history: list, context: dict):
             print_turn_assistants(history, turn_start)
 
 
+def show_welcome():
+    """打印欢迎横幅和使用提示."""
+    print()
+    print("  \033[1;36m  +-- runcode --+")
+    print("  \033[1;36m  | \033[0m\033[2m  编程助手 \033[1;36m   |")
+    print("  \033[1;36m  +-------------+\033[0m")
+    print()
+    print(f"  \033[2m输入问题后按回车发送。行尾加 \\\\ 可换行继续输入。\033[0m")
+    print(f"  \033[2m\033[0m\033[33mq\033[0m\033[2m = 退出\033[0m")
+    print()
+
+
 def main():
     """Main entry point for the runcode CLI."""
+    global TURN_COUNTER
     CLI_ACTIVE = True
-    print("欢迎使用runcode")
-    print("输入问题后按回车键发送，输入q即可退出程序。\n")
+
+    # Configure stdout for Chinese/Unicode support on Windows
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+    if READLINE_AVAILABLE:
+        histfile = os.path.expanduser("~/.runcode_history")
+        try:
+            readline.read_history_file(histfile)
+        except (FileNotFoundError, OSError):
+            pass
+        readline.set_history_length(500)
+
+    show_welcome()
+    print(ui_separator("会话开始"))
+    print()
+
     history = []
     context = update_context({}, [])
     threading.Thread(target=cron_autorun_loop,
                      args=(history, context), daemon=True).start()
+
     while True:
-        try:
-            query = input(PROMPT)
-        except (EOFError, KeyboardInterrupt):
-            break
-        if query.strip().lower() in ("q", "exit", ""):
-            break
-        trigger_hooks("UserPromptSubmit", query)
+        TURN_COUNTER += 1
         turn_start = len(history)
+        try:
+            # Multi-line input: lines ending with \ continue
+            lines = []
+            while True:
+                raw = input(ui_prompt() if not lines else "\033[2m  继续 > \033[0m")
+                if raw.endswith("\\"):
+                    lines.append(raw[:-1])
+                    continue
+                lines.append(raw)
+                break
+            query = "".join(lines)
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print(f"\n  {ui_separator('会话结束')}")
+            elapsed = time.time() - _SESSION_START
+            print(f"  \033[2m{ui_session_stats()}\033[0m")
+            print(f"  \033[33m再见!\033[0m")
+            break
+
+        stripped = query.strip()
+        if stripped.lower() in ("q", "exit"):
+            print(f"\n  {ui_separator('会话结束')}")
+            elapsed = time.time() - _SESSION_START
+            print(f"  \033[2m{ui_session_stats()}\033[0m")
+            print(f"  \033[33m再见!\033[0m")
+            break
+        if not stripped:
+            TURN_COUNTER -= 1
+            continue
+
+        print(f"  {ui_separator(f'第 {TURN_COUNTER} 轮')}")
+        trigger_hooks("UserPromptSubmit", query)
         history.append({"role": "user", "content": query})
+
+        turn_time = time.time()
         with agent_lock:
             agent_loop(history, context)
             context = update_context(context, history)
             print_turn_assistants(history, turn_start)
 
+        elapsed = time.time() - turn_time
         inbox = consume_lead_inbox(route_protocol=True)
         if inbox:
             def inbox_label(msg):
@@ -2081,11 +2189,19 @@ def main():
                 return f"{msg.get('type', 'message')}{suffix}"
 
             inbox_text = "\n".join(
-                f"From {m['from']} [{inbox_label(m)}]: "
+                f"来自 {m['from']} [{inbox_label(m)}]: "
                 f"{m['content'][:200]}" for m in inbox)
             history.append({"role": "user",
-                            "content": f"[Inbox]\n{inbox_text}"})
+                            "content": f"[收件箱]\n{inbox_text}"})
+
+        print(f"  \033[2m完成 ({ui_duration(elapsed)})\033[0m")
         print()
+
+    if READLINE_AVAILABLE:
+        try:
+            readline.write_history_file(histfile)
+        except (OSError, IOError):
+            pass
 
 
 if __name__ == "__main__":
