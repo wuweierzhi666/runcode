@@ -50,16 +50,5 @@ env/
 .worktrees/
 .scheduled_tasks.json
 
-# ------ Node / Web ------
-web/node_modules/
-web/.next/
-web/out/
-.next/
-out/
-node_modules/
-
 # ------ Vercel ------
 .vercel
-
-# ------ Misc ------
-.ruff_cache/
