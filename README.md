@@ -98,9 +98,6 @@ runcode/
 │   ├── code.py              # 主入口 Agent
 │   ├── images/              # 架构图 SVG
 │   └── README.md
-├── agents/                  # 📖 参考脚本
-│   ├── s01_agent_loop.py ~ s12_*.py
-│   └── s_full.py            # 完整参考实现
 ├── skills/                  # 📚 运行时加载的技能
 │   ├── agent-builder/
 │   ├── code-review/
@@ -113,24 +110,6 @@ runcode/
 ```
 
 ---
-
-## 🧪 运行教学脚本
-
-想了解每个机制的工作原理？可以单独运行教学脚本：
-
-```bash
-# 运行基础 Agent 循环
-python agents/s01_agent_loop.py
-
-# 运行工具调度
-python agents/s02_tool_use.py
-
-# 运行完整参考实现（集成所有机制）
-python agents/s_full.py
-```
-
-每个脚本都是自包含的，可以直接运行体验。
-
 ---
 
 ## 🌐 多模型支持
